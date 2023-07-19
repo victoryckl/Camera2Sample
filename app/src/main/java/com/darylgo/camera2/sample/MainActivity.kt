@@ -17,6 +17,7 @@ import android.util.Size
 import android.view.*
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.Toast
 import androidx.annotation.AnyThread
 import androidx.annotation.MainThread
 import androidx.annotation.WorkerThread
@@ -302,6 +303,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         val cameraIdList = cameraManager.cameraIdList
         cameraIdList.forEach { cameraId ->
             val cameraCharacteristics = cameraManager.getCameraCharacteristics(cameraId)
+            Log.i(TAG, "onCreate: cameraId = $cameraId, level = ${cameraCharacteristics[CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL]}")
             if (cameraCharacteristics.isHardwareLevelSupported(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL)) {
                 if (cameraCharacteristics[CameraCharacteristics.LENS_FACING] == CameraCharacteristics.LENS_FACING_FRONT) {
                     frontCameraId = cameraId
@@ -312,6 +314,10 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                 }
             }
         }
+
+        val cameraId = backCameraId ?: frontCameraId
+        if (cameraId == null)
+            Toast.makeText(this, "相机不支持 INFO_SUPPORTED_HARDWARE_LEVEL_FULL ", Toast.LENGTH_LONG).show()
 
         previewSurfaceTextureFuture = SettableFuture()
         cameraPreview.surfaceTextureListener = PreviewSurfaceTextureListener()
@@ -337,13 +343,15 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         super.onResume()
         deviceOrientationListener.enable()
         if (checkRequiredPermissions()) {
-            val cameraId = backCameraId ?: frontCameraId!!
-            openCamera(cameraId)
-            createCaptureRequestBuilders()
-            setPreviewSize(MAX_PREVIEW_WIDTH, MAX_PREVIEW_HEIGHT)
-            setImageSize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT)
-            createSession()
-            startPreview()
+            val cameraId = backCameraId ?: frontCameraId
+            if (cameraId != null) {
+                openCamera(cameraId)
+                createCaptureRequestBuilders()
+                setPreviewSize(MAX_PREVIEW_WIDTH, MAX_PREVIEW_HEIGHT)
+                setImageSize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT)
+                createSession()
+                startPreview()
+            }
         }
     }
 
