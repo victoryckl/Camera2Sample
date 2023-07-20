@@ -25,7 +25,7 @@ public class BlazeFaceNcnn
     public native boolean closeCamera();
     public native boolean setOutputWindow(Surface surface);
 
-    public native boolean renderImage(byte[] data, int len, int width, int height);
+    public native int find(byte[] data, int width, int height);
     public native boolean renderImage2(Image image);
 
     public native boolean testCamera();

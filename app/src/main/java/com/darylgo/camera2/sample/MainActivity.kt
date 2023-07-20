@@ -8,10 +8,8 @@ import android.graphics.*
 import android.hardware.camera2.*
 import android.location.Location
 import android.location.LocationManager
-import android.media.Image
 import android.media.ImageReader
 import android.media.MediaActionSound
-import android.opengl.ETC1.getWidth
 import android.os.*
 import android.provider.MediaStore
 import android.util.Log
@@ -26,6 +24,7 @@ import androidx.annotation.WorkerThread
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
+import com.tencent.blazefacencnn.BlazeFaceNcnn
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.DateFormat
@@ -61,8 +60,8 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         private const val MSG_START_CAPTURE_IMAGE_CONTINUOUSLY: Int = 11
         private const val MSG_CREATE_REQUEST_BUILDERS: Int = 12
 
-        private const val MAX_PREVIEW_WIDTH: Int = 1440
-        private const val MAX_PREVIEW_HEIGHT: Int = 1080
+        private const val MAX_PREVIEW_WIDTH: Int = 320//1440
+        private const val MAX_PREVIEW_HEIGHT: Int = 240//1080
         private const val MAX_IMAGE_WIDTH: Int = 4032
         private const val MAX_IMAGE_HEIGHT: Int = 3024
     }
@@ -147,6 +146,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                     // Set up an ImageReader to receive preview frame data if YUV_420_888 is supported.
                     val imageFormat = ImageFormat.YUV_420_888
                     val streamConfigurationMap = cameraCharacteristics[CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP]
+                    streamConfigurationMap?.outputFormats?.forEach { Log.i(TAG, "outputFormats: 0x${Integer.toHexString(it)}") }
                     if (streamConfigurationMap?.isOutputSupportedFor(imageFormat) == true) {
                         previewDataImageReader = ImageReader.newInstance(previewSize.width, previewSize.height, imageFormat, 3)
                         previewDataImageReader?.setOnImageAvailableListener(OnPreviewDataAvailableListener(), cameraHandler)
@@ -300,7 +300,9 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         setContentView(R.layout.activity_main)
 
         initPaint()
+        initOrientationListener()
         startCameraThread()
+        reload()
 
         val cameraIdList = cameraManager.cameraIdList
         cameraIdList.forEach { cameraId ->
@@ -316,8 +318,16 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                 }
             //}
         }
+        frontCameraCharacteristics?.apply {
+            var orientation = get(CameraCharacteristics.SENSOR_ORIENTATION)
+            Log.i(TAG, "onCreate: frontCamera orientation = ${orientation}")
+        }
+        backCameraCharacteristics?.apply {
+            var orientation = get(CameraCharacteristics.SENSOR_ORIENTATION)
+            Log.i(TAG, "onCreate: backCamera orientation = ${orientation}")
+        }
 
-        val cameraId = backCameraId ?: frontCameraId
+        val cameraId = frontCameraId ?: backCameraId
         if (cameraId == null)
             Toast.makeText(this, "相机不支持 INFO_SUPPORTED_HARDWARE_LEVEL_FULL ", Toast.LENGTH_LONG).show()
 
@@ -345,7 +355,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         super.onResume()
         deviceOrientationListener.enable()
         if (checkRequiredPermissions()) {
-            val cameraId = backCameraId ?: frontCameraId
+            val cameraId = frontCameraId ?: backCameraId
             if (cameraId != null) {
                 openCamera(cameraId)
                 createCaptureRequestBuilders()
@@ -367,6 +377,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
 
     override fun onDestroy() {
         super.onDestroy()
+        mOrientationListener.disable()
         stopCameraThread()
         mediaActionSound.release()
     }
@@ -697,7 +708,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
     val mPaint  = Paint()
     private fun initPaint() {
         mPaint.setColor(Color.RED)
-        mPaint.setTextSize(80f)
+        mPaint.setTextSize(40f)
         mPaint.setStyle(Paint.Style.FILL)
     }
 
@@ -715,12 +726,15 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
             if (image == null) return
             val imageWidth = image.width
             val imageHeight = image.height
-            Log.i(TAG, "onImageAvailable: w=${imageWidth}, h=${imageHeight}, ${Thread.currentThread().name}")
 
-            //从image中获取到byte格式的数据
-            //val dataByte: ByteArray = getBytesFromImageAsType(image)
-            val dataByte = yuv888toNv21(image)
-            image.close()
+            Log.i(TAG, "onImageAvailable: w=${imageWidth}, h=${imageHeight}, " +
+                    "${Thread.currentThread().name}, 0x${Integer.toHexString(image.format)}, " +
+                    "pixelStride=${image.planes[1].pixelStride}, rowStride=${image.planes[1].rowStride}")
+
+            //从image中获取到nv21格式的数据
+            val dataByte = Utils.YUV_420_888toNV21(image)
+            // 图像中找到几个人脸
+            val faceCount = blazefacencnn?.find(dataByte, imageWidth, imageHeight)
 
             val yuvimage = YuvImage(dataByte, ImageFormat.NV21, imageWidth, imageHeight, null)
             val baos = ByteArrayOutputStream()
@@ -738,8 +752,9 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                 bitmap, Rect(0, 0, bitmap.getWidth(), bitmap.getHeight()),
                 Rect(0, 0, canvas.width, canvas.height), null
             )
-            canvas.drawText("世界和平", 100f, 120f, mPaint)
+            canvas.drawText("人脸："+faceCount, 0f, 40f, mPaint)
             previewSurface!!.unlockCanvasAndPost(canvas)
+
             //将传入的 yuv buffer 转为 cv::mat, 并通过cvtcolor 转换为BGR 或 RGB 格式
 //            val YUVMat = Mat((imageHeight * 1.5).toInt(), imageWidth, CvType.CV_8UC1)
 //            YUVMat.put(0, 0, DataByte)
@@ -748,6 +763,8 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
 //            //Imgproc.cvtColor(mYUVMat, mRGBMat, Imgproc.COLOR_YUV420sp2RGB);
 //            //Imgproc.cvtColor(mYUVMat, mRGBMat, Imgproc.COLOR_YUV420sp2RGB);
 //            Imgproc.cvtColor(YUVMat, RGBMat, Imgproc.COLOR_YUV420sp2BGR)
+
+            image.close()
         }
     }
 
@@ -836,115 +853,51 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         }
     }
 
-    //imagereader 获取的image 从yuv_420_888 转到 yuv 的byte[]
-    fun getBytesFromImageAsType(image: Image): ByteArray {
-        val Y = image.planes[0]
-        val U = image.planes[1]
-        val V = image.planes[2]
-        val Yb = Y.buffer.remaining()
-        val Ub = U.buffer.remaining()
-        val Vb = V.buffer.remaining()
-        val data = ByteArray(Yb + Ub + Vb)
-        Y.buffer[data, 0, Yb]
-        U.buffer[data, Yb, Ub]
-        V.buffer[data, Yb + Ub, Vb]
-        return data
-    }
+    //=================================================
+    private var prevOrientation: Int = 0
+    private lateinit var mOrientationListener: OrientationEventListener
 
-    fun yuv888toNv21(image: Image): ByteArray {
-        val size = image.width * image.height * 3 / 2 // NV21占用字节数
-        val data = ByteArray(size)
-        readYuvDataToBuffer(image, ImageFormat.NV21, data)
-        return data
-    }
-
-    /**
-     * take YUV data from image, output data format-> YYYYYYYYUUVV
-     */
-    private fun readYuv888DataToBuffer(image: Image, data: ByteArray): Boolean {
-        if (image.format != ImageFormat.YUV_420_888) {
-            throw IllegalArgumentException("only support ImageFormat.YUV_420_888 for mow")
-        }
-
-        val imageWidth = image.width
-        val imageHeight = image.height
-        val planes = image.planes
-        var offset = 0
-        for (plane in planes.indices) {
-            val buffer = planes[plane].buffer ?: return false
-            val rowStride = planes[plane].rowStride
-            val pixelStride = planes[plane].pixelStride
-            val planeWidth = if (plane == 0) imageWidth else imageWidth / 2
-            val planeHeight = if (plane == 0) imageHeight else imageHeight / 2
-            if (pixelStride == 1 && rowStride == planeWidth) {
-                buffer.get(data, offset, planeWidth * planeHeight)
-                offset += planeWidth * planeHeight
-            } else {
-                // Copy pixels one by one respecting pixelStride and rowStride
-                val rowData = ByteArray(rowStride)
-                var colOffset: Int
-                for (row in 0 until planeHeight - 1) {
-                    colOffset = 0
-                    buffer.get(rowData, 0, rowStride)
-                    for (col in 0 until planeWidth) {
-                        data[offset++] = rowData[colOffset]
-                        colOffset += pixelStride
-                    }
+    private fun initOrientationListener() {
+        mOrientationListener = object : OrientationEventListener(this) {
+            override fun onOrientationChanged(orientation: Int) {
+                var orientation = orientation
+                if (orientation == ORIENTATION_UNKNOWN) {
+                    return  //手机平放时，检测不到有效的角度
                 }
-                // Last row is special in some devices:
-                // may not contain the full |rowStride| bytes of data
-                colOffset = 0
-                buffer.get(rowData, 0, Math.min(rowStride, buffer.remaining()))
-                for (col in 0 until planeWidth) {
-                    data[offset++] = rowData[colOffset]
-                    colOffset += pixelStride
+                //只检测是否有四个角度的改变
+                orientation = if (orientation > 350 || orientation < 10) { //0度
+                    0
+                } else if (orientation > 80 && orientation < 100) { //90度
+                    90
+                } else if (orientation > 170 && orientation < 190) { //180度
+                    180
+                } else if (orientation > 260 && orientation < 280) { //270度
+                    270
+                } else {
+                    return
+                }
+                if (prevOrientation != orientation) {
+                    Log.v(TAG, "Orientation changed to $orientation")
+                    prevOrientation = orientation
                 }
             }
         }
-
-        return true
+        if (mOrientationListener.canDetectOrientation()) {
+            Log.v(TAG, "Can detect orientation");
+            mOrientationListener.enable();
+        } else {
+            Log.v(TAG, "Cannot detect orientation");
+            mOrientationListener.disable();
+        }
     }
 
-    /**
-     * take YUV image from image.
-     */
-    fun readYuvDataToBuffer(image: Image, format:Int, data: ByteArray): Boolean {
-        require(!(format != ImageFormat.NV21 && format != ImageFormat.YV12)) {
-            "output only support ImageFormat.NV21 and ImageFormat.YV12 for now"
-        }
+    ///===================================
+    private var blazefacencnn: BlazeFaceNcnn? = BlazeFaceNcnn()
 
-        val result = readYuv888DataToBuffer(image, data)
-        if (!result) {
-            return false
+    private fun reload() {
+        val ret_init = blazefacencnn!!.loadModel(assets, 0, 0)
+        if (!ret_init) {
+            Log.e("MainActivity", "blazefacencnn loadModel failed")
         }
-        // data(YU12):  q UU VV
-        if (format == ImageFormat.NV21) {
-            // convert to: YYYY YYYY VU VU
-            val size = data.size
-            val uv = ByteArray(size / 3)
-            var uOffset = size / 6 * 4
-            var vOffset = size / 6 * 5
-            for (i in 0 until uv.size - 1 step 2) {
-                uv[i] = data[vOffset++]
-                uv[i + 1] = data[uOffset++]
-            }
-
-            val uvOffset = size / 3 * 2
-            for (i in uvOffset until size) {
-                val uvIndex = i - uvOffset
-                if (uvIndex >= uv.size) break;
-                data[i] = uv[uvIndex]
-            }
-        } else if (format == ImageFormat.YV12) {
-            // convert to: YYYY YYYY VV UU
-            val size = data.size
-            val tmp = ByteArray(size / 6)
-            val uOffset = size / 6 * 4
-            val vOffset = size / 6 * 5
-            System.arraycopy(data, uOffset, tmp, 0, tmp.size)
-            System.arraycopy(data, vOffset, data, uOffset, tmp.size)
-            System.arraycopy(tmp, 0, data, vOffset, tmp.size)
-        }
-        return true
     }
 }
