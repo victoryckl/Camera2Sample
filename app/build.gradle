@@ -28,6 +28,32 @@ android {
     kotlinOptions {
         jvmTarget = '1.8'
     }
+
+    //设置apk打包名称，注意引用
+    android.applicationVariants.all { variant ->
+        //获取渠道名称
+        //def channel = variant.productFlavors[0].name
+        //获取当前时间的"YYYY-MM-dd"格式。
+        def createTime = new Date().format("YYYYMMdd", TimeZone.getTimeZone("GMT+08:00"))
+        variant.outputs.each {
+            //判断是release还是debug版本
+            def apkName = "${rootProject.name}_${variant.versionName}_${createTime}"
+            if (variant.buildType.name.contains("debug")) {
+                it.outputFileName = "${apkName}_debug.apk"
+            }
+            if (variant.buildType.name.contains("release")) {
+                it.outputFileName = "${apkName}.apk"
+            }
+            println it.outputFileName
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            version "3.10.2"
+            path file('src/main/jni/CMakeLists.txt')
+        }
+    }
 }
 
 dependencies {

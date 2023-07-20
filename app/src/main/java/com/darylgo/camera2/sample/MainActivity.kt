@@ -8,8 +8,10 @@ import android.graphics.*
 import android.hardware.camera2.*
 import android.location.Location
 import android.location.LocationManager
+import android.media.Image
 import android.media.ImageReader
 import android.media.MediaActionSound
+import android.opengl.ETC1.getWidth
 import android.os.*
 import android.provider.MediaStore
 import android.util.Log
@@ -24,6 +26,7 @@ import androidx.annotation.WorkerThread
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.DateFormat
 import java.text.SimpleDateFormat
@@ -32,6 +35,7 @@ import java.util.concurrent.BlockingQueue
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingDeque
+
 
 @SuppressLint("ClickableViewAccessibility")
 class MainActivity : AppCompatActivity(), Handler.Callback {
@@ -115,13 +119,9 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                 val previewSurface = previewSurface
                 val previewDataSurface = previewDataSurface
                 val jpegSurface = jpegSurface
-                outputs.add(previewSurface!!)
-                if (previewDataSurface != null) {
-                    outputs.add(previewDataSurface)
-                }
-                if (jpegSurface != null) {
-                    outputs.add(jpegSurface)
-                }
+                //outputs.add(previewSurface!!)
+                if (previewDataSurface != null) outputs.add(previewDataSurface)
+                if (jpegSurface != null) outputs.add(jpegSurface)
                 captureSessionFuture = SettableFuture()
                 val cameraDevice = cameraDeviceFuture?.get()
                 cameraDevice?.createCaptureSession(outputs, sessionStateCallback, mainHandler)
@@ -171,9 +171,9 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                 if (cameraDevice != null && captureSession != null) {
                     val previewSurface = previewSurface!!
                     val previewDataSurface = previewDataSurface
-                    previewImageRequestBuilder.addTarget(previewSurface)
+                    //previewImageRequestBuilder.addTarget(previewSurface)
                     // Avoid missing preview frame while capturing image.
-                    captureImageRequestBuilder.addTarget(previewSurface)
+                    //captureImageRequestBuilder.addTarget(previewSurface)
                     if (previewDataSurface != null) {
                         previewImageRequestBuilder.addTarget(previewDataSurface)
                         // Avoid missing preview data while capturing image.
@@ -298,13 +298,15 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        initPaint()
         startCameraThread()
 
         val cameraIdList = cameraManager.cameraIdList
         cameraIdList.forEach { cameraId ->
             val cameraCharacteristics = cameraManager.getCameraCharacteristics(cameraId)
             Log.i(TAG, "onCreate: cameraId = $cameraId, level = ${cameraCharacteristics[CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL]}")
-            if (cameraCharacteristics.isHardwareLevelSupported(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL)) {
+            //if (cameraCharacteristics.isHardwareLevelSupported(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL)) {
                 if (cameraCharacteristics[CameraCharacteristics.LENS_FACING] == CameraCharacteristics.LENS_FACING_FRONT) {
                     frontCameraId = cameraId
                     frontCameraCharacteristics = cameraCharacteristics
@@ -312,7 +314,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                     backCameraId = cameraId
                     backCameraCharacteristics = cameraCharacteristics
                 }
-            }
+            //}
         }
 
         val cameraId = backCameraId ?: frontCameraId
@@ -692,19 +694,60 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
 
     }
 
+    val mPaint  = Paint()
+    private fun initPaint() {
+        mPaint.setColor(Color.RED)
+        mPaint.setTextSize(80f)
+        mPaint.setStyle(Paint.Style.FILL)
+    }
+
+    /**
+     * imagereader 的回调函数 OnPreviewDataAvailableListener()
+     * 通过 getBytesFromImageAsType() 函数将 image 转为 yuv 格式的byte[]
+     * 通过 opencv 将 yuv 格式的byte[] 转换为 cv::Mat
+     * 通过 Detect() 将 cv::Mat 进行算法处理
+     * 通过 canvas.drawBitmap() 将图像绘制到 texterview 中
+     */
     private inner class OnPreviewDataAvailableListener : ImageReader.OnImageAvailableListener {
         @WorkerThread
         override fun onImageAvailable(imageReader: ImageReader) {
             val image = imageReader.acquireNextImage()
-            image?.use {
-                val planes = image.planes
-                val yPlane = planes[0]
-                val uPlane = planes[1]
-                val vPlane = planes[2]
-                val yBuffer = yPlane.buffer // Frame data of Y channel
-                val uBuffer = uPlane.buffer // Frame data of U channel
-                val vBuffer = vPlane.buffer // Frame data of V channel
-            }
+            if (image == null) return
+            val imageWidth = image.width
+            val imageHeight = image.height
+            Log.i(TAG, "onImageAvailable: w=${imageWidth}, h=${imageHeight}, ${Thread.currentThread().name}")
+
+            //从image中获取到byte格式的数据
+            //val dataByte: ByteArray = getBytesFromImageAsType(image)
+            val dataByte = yuv888toNv21(image)
+            image.close()
+
+            val yuvimage = YuvImage(dataByte, ImageFormat.NV21, imageWidth, imageHeight, null)
+            val baos = ByteArrayOutputStream()
+            yuvimage.compressToJpeg(Rect(0, 0, imageWidth, imageHeight), 100, baos)
+            var rawImage = baos.toByteArray()
+            //将rawImage转换成bitmap
+            val options =  BitmapFactory.Options()
+            options.inPreferredConfig = Bitmap.Config.RGB_565
+            val bitmap = BitmapFactory.decodeByteArray(rawImage, 0, rawImage.size, options)
+
+            val canvas = previewSurface!!.lockCanvas(null)
+            canvas.drawColor(0, PorterDuff.Mode.CLEAR)
+
+            canvas.drawBitmap(
+                bitmap, Rect(0, 0, bitmap.getWidth(), bitmap.getHeight()),
+                Rect(0, 0, canvas.width, canvas.height), null
+            )
+            canvas.drawText("世界和平", 100f, 120f, mPaint)
+            previewSurface!!.unlockCanvasAndPost(canvas)
+            //将传入的 yuv buffer 转为 cv::mat, 并通过cvtcolor 转换为BGR 或 RGB 格式
+//            val YUVMat = Mat((imageHeight * 1.5).toInt(), imageWidth, CvType.CV_8UC1)
+//            YUVMat.put(0, 0, DataByte)
+//
+//            val RGBMat = Mat(imageHeight, imageWidth, CvType.CV_8UC3)
+//            //Imgproc.cvtColor(mYUVMat, mRGBMat, Imgproc.COLOR_YUV420sp2RGB);
+//            //Imgproc.cvtColor(mYUVMat, mRGBMat, Imgproc.COLOR_YUV420sp2RGB);
+//            Imgproc.cvtColor(YUVMat, RGBMat, Imgproc.COLOR_YUV420sp2BGR)
         }
     }
 
@@ -793,4 +836,115 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         }
     }
 
+    //imagereader 获取的image 从yuv_420_888 转到 yuv 的byte[]
+    fun getBytesFromImageAsType(image: Image): ByteArray {
+        val Y = image.planes[0]
+        val U = image.planes[1]
+        val V = image.planes[2]
+        val Yb = Y.buffer.remaining()
+        val Ub = U.buffer.remaining()
+        val Vb = V.buffer.remaining()
+        val data = ByteArray(Yb + Ub + Vb)
+        Y.buffer[data, 0, Yb]
+        U.buffer[data, Yb, Ub]
+        V.buffer[data, Yb + Ub, Vb]
+        return data
+    }
+
+    fun yuv888toNv21(image: Image): ByteArray {
+        val size = image.width * image.height * 3 / 2 // NV21占用字节数
+        val data = ByteArray(size)
+        readYuvDataToBuffer(image, ImageFormat.NV21, data)
+        return data
+    }
+
+    /**
+     * take YUV data from image, output data format-> YYYYYYYYUUVV
+     */
+    private fun readYuv888DataToBuffer(image: Image, data: ByteArray): Boolean {
+        if (image.format != ImageFormat.YUV_420_888) {
+            throw IllegalArgumentException("only support ImageFormat.YUV_420_888 for mow")
+        }
+
+        val imageWidth = image.width
+        val imageHeight = image.height
+        val planes = image.planes
+        var offset = 0
+        for (plane in planes.indices) {
+            val buffer = planes[plane].buffer ?: return false
+            val rowStride = planes[plane].rowStride
+            val pixelStride = planes[plane].pixelStride
+            val planeWidth = if (plane == 0) imageWidth else imageWidth / 2
+            val planeHeight = if (plane == 0) imageHeight else imageHeight / 2
+            if (pixelStride == 1 && rowStride == planeWidth) {
+                buffer.get(data, offset, planeWidth * planeHeight)
+                offset += planeWidth * planeHeight
+            } else {
+                // Copy pixels one by one respecting pixelStride and rowStride
+                val rowData = ByteArray(rowStride)
+                var colOffset: Int
+                for (row in 0 until planeHeight - 1) {
+                    colOffset = 0
+                    buffer.get(rowData, 0, rowStride)
+                    for (col in 0 until planeWidth) {
+                        data[offset++] = rowData[colOffset]
+                        colOffset += pixelStride
+                    }
+                }
+                // Last row is special in some devices:
+                // may not contain the full |rowStride| bytes of data
+                colOffset = 0
+                buffer.get(rowData, 0, Math.min(rowStride, buffer.remaining()))
+                for (col in 0 until planeWidth) {
+                    data[offset++] = rowData[colOffset]
+                    colOffset += pixelStride
+                }
+            }
+        }
+
+        return true
+    }
+
+    /**
+     * take YUV image from image.
+     */
+    fun readYuvDataToBuffer(image: Image, format:Int, data: ByteArray): Boolean {
+        require(!(format != ImageFormat.NV21 && format != ImageFormat.YV12)) {
+            "output only support ImageFormat.NV21 and ImageFormat.YV12 for now"
+        }
+
+        val result = readYuv888DataToBuffer(image, data)
+        if (!result) {
+            return false
+        }
+        // data(YU12):  q UU VV
+        if (format == ImageFormat.NV21) {
+            // convert to: YYYY YYYY VU VU
+            val size = data.size
+            val uv = ByteArray(size / 3)
+            var uOffset = size / 6 * 4
+            var vOffset = size / 6 * 5
+            for (i in 0 until uv.size - 1 step 2) {
+                uv[i] = data[vOffset++]
+                uv[i + 1] = data[uOffset++]
+            }
+
+            val uvOffset = size / 3 * 2
+            for (i in uvOffset until size) {
+                val uvIndex = i - uvOffset
+                if (uvIndex >= uv.size) break;
+                data[i] = uv[uvIndex]
+            }
+        } else if (format == ImageFormat.YV12) {
+            // convert to: YYYY YYYY VV UU
+            val size = data.size
+            val tmp = ByteArray(size / 6)
+            val uOffset = size / 6 * 4
+            val vOffset = size / 6 * 5
+            System.arraycopy(data, uOffset, tmp, 0, tmp.size)
+            System.arraycopy(data, vOffset, data, uOffset, tmp.size)
+            System.arraycopy(tmp, 0, data, vOffset, tmp.size)
+        }
+        return true
+    }
 }

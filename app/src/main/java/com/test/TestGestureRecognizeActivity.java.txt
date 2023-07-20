@@ -1,0 +1,450 @@
+package com.test;
+
+import static org.opencv.core.Core.flip;
+
+import android.content.ContentResolver;
+import android.content.Context;
+import android.content.Intent;
+import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Point;
+import android.graphics.Rect;
+import android.graphics.SurfaceTexture;
+import android.media.Image;
+import android.media.ImageReader;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Message;
+import android.provider.MediaStore;
+import android.util.Log;
+import android.view.KeyEvent;
+import android.view.TextureView;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.appcompat.app.AppCompatActivity;
+
+import com.sz.nn.sdk.GestureRecognize;
+
+import org.opencv.android.OpenCVLoader;
+import org.opencv.android.Utils;
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
+import org.opencv.core.Point;
+import org.opencv.core.Scalar;
+import org.opencv.imgcodecs.Imgcodecs;
+import org.opencv.imgproc.Imgproc;
+
+import java.io.File;
+import java.util.ArrayList;
+
+public class TestGestureRecognizeActivity extends AppCompatActivity {
+    private static final String TAG = "TestGestureRecognizeActivity";
+    private boolean m_bLoadfromCamera = true;
+    private boolean m_bUseThread = false;
+    private String m_imgPath;
+    private final int OPENALBUM = 1;
+
+    private ArrayList<Point> m_listPoint = new ArrayList<Point>();
+    private ArrayList<Integer> m_listLable = new ArrayList<Integer>();
+    private ArrayList<Point> m_listInterPoint = new ArrayList<Point>();
+    private ArrayList<Integer> m_listInterLable = new ArrayList<Integer>();
+    private String m_strLable = "NO Recognize";
+    private HandlerThread m_handleThread = null;
+    private Handler m_handle = null;
+
+    TextureView.SurfaceTextureListener mSurfaceTextureListener;
+
+    static Scalar[] keyPointsColors = {
+            new Scalar(0, 255, 255), new Scalar(0, 191, 255), new Scalar(0, 255, 102), new Scalar(0, 77, 255),
+            new Scalar(0, 255, 0), new Scalar(77, 255, 255), new Scalar(77, 255, 204), new Scalar(77, 204, 255),
+            new Scalar(191, 255, 77), new Scalar(77, 191, 255), new Scalar(191, 255, 77), new Scalar(204, 77, 255),
+            new Scalar(77, 255, 204), new Scalar(191, 77, 255), new Scalar(77, 255, 191), new Scalar(127, 77, 255),
+            new Scalar(77, 255, 127), new Scalar(77, 255, 255), new Scalar(0, 255, 255), new Scalar(77, 204, 255),
+            new Scalar(0, 255, 255), new Scalar(0, 191, 255), new Scalar(0, 255, 102), new Scalar(0, 77, 255),
+            new Scalar(0, 255, 0), new Scalar(77, 255, 255)};
+    static Scalar[] lineColors = {
+            new Scalar(0, 215, 255), new Scalar(0, 255, 204), new Scalar(0, 134, 255), new Scalar(0, 255, 50),
+            new Scalar(0, 255, 102), new Scalar(77, 255, 222), new Scalar(77, 196, 255), new Scalar(77, 135, 255),
+            new Scalar(191, 255, 77), new Scalar(77, 255, 77), new Scalar(77, 191, 255), new Scalar(204, 77, 255),
+            new Scalar(77, 222, 255), new Scalar(255, 156, 127), new Scalar(0, 127, 255), new Scalar(255, 127, 77),
+            new Scalar(0, 77, 255), new Scalar(255, 77, 36), new Scalar(0, 77, 255), new Scalar(0, 77, 255),
+            new Scalar(0, 77, 255), new Scalar(0, 77, 255), new Scalar(255, 156, 127), new Scalar(255, 156, 127)};
+    static int[][] keypointsIds = {
+            {0, 1}, {0, 2}, {1, 3}, {2, 4}, {5, 18}, {6, 18}, {5, 7}, {7, 9}, {6, 8},
+            {8, 10}, {17, 18}, {18, 19}, {19, 11}, {19, 12}, {11, 13}, {12, 14}, {13, 15}, {14, 16},
+            {20, 24}, {21, 25}, {23, 25}, {22, 24}, {15, 24}, {16, 25}, {26, 27}, {27, 28}, {28, 29},
+            {29, 30}, {30, 31}, {31, 32}, {32, 33}, {33, 34}, {34, 35}, {35, 36}, {36, 37}, {37, 38},
+            {38, 39}, {39, 40}, {40, 41}, {41, 42}, {43, 44}, {44, 45}, {45, 46}, {46, 47}, {48, 49},
+            {49, 50}, {50, 51}, {51, 52}, {53, 54}, {54, 55}, {55, 56}, {57, 58}, {58, 59}, {59, 60},
+            {60, 61}, {62, 63}, {63, 64}, {64, 65}, {65, 66}, {66, 67}, {68, 69}, {69, 70}, {70, 71},
+            {71, 72}, {72, 73}, {74, 75}, {75, 76}, {76, 77}, {77, 78}, {78, 79}, {79, 80}, {80, 81},
+            {81, 82}, {82, 83}, {83, 84}, {84, 85}, {85, 86}, {86, 87}, {87, 88}, {88, 89}, {89, 90},
+            {90, 91}, {91, 92}, {92, 93}, {94, 95}, {95, 96}, {96, 97}, {97, 98}, {94, 99}, {99, 100},
+            {100, 101}, {101, 102}, {94, 103}, {103, 104}, {104, 105}, {105, 106}, {94, 107}, {107, 108}, {108, 109},
+            {109, 110}, {94, 111}, {111, 112}, {112, 113}, {113, 114}, {115, 116}, {116, 117}, {117, 118}, {118, 119},
+            {115, 120}, {120, 121}, {121, 122}, {122, 123}, {115, 124}, {124, 125}, {125, 126}, {126, 127}, {115, 128},
+            {128, 129}, {129, 130}, {130, 131}, {115, 132}, {132, 133}, {133, 134}, {134, 135}};
+
+    /**
+     * imagereader 的回调函数 OnImageAvailableListener() ,为重点关注函数
+     * 通过 getBytesFromImageAsType() 函数将 image 转为 yuv 格式的byte[]
+     * 通过 opencv 将 yuv 格式的byte[] 转换为 cv::Mat
+     * 通过 Detect() 将 cv::Mat 进行算法处理
+     * 通过 canvas.drawBitmap() 将图像绘制到 texterview 中
+     */
+    boolean mNeedRotate = true;
+    GestureRecognize mGestureRecognize = null;
+    boolean mInitState = false;
+    private AutoFitTextureView mCameraView;
+    private Camera2Basic mCamera = null;
+    private ImageReader.OnImageAvailableListener imageListener = new ImageReader.OnImageAvailableListener() {
+        @Override
+        public void onImageAvailable(ImageReader reader) {
+            //super.onImageAvailable(reader);
+            if (reader != null) {
+                Image image = reader.acquireLatestImage();
+                if (image == null) return;
+                int imageWidth = image.getWidth();
+                int imageHeight = image.getHeight();
+                Log.d(TAG,"----the camera image width = " + imageWidth);
+                Log.d(TAG,"----the camera image Height = " + imageHeight);
+                //从image中获取到byte格式的数据
+                byte[] DataByte = mCamera.getBytesFromImageAsType(image);
+
+                //将传入的 yuv buffer 转为 cv::mat, 并通过cvtcolor 转换为BGR 或 RGB 格式
+                Mat YUVMat = new Mat((int) (imageHeight * 1.5), imageWidth, CvType.CV_8UC1);
+                YUVMat.put(0, 0, DataByte);
+
+                Mat RGBMat = new Mat(imageHeight, imageWidth, CvType.CV_8UC3);
+                //Imgproc.cvtColor(mYUVMat, mRGBMat, Imgproc.COLOR_YUV420sp2RGB);
+                Imgproc.cvtColor(YUVMat, RGBMat, Imgproc.COLOR_YUV420sp2BGR);
+
+                if (mNeedRotate && m_bLoadfromCamera) {
+                   //transpose(mRGBMat, mRGBMat); //90°旋转和镜像翻转处理
+                    flip(RGBMat, RGBMat, 1); //0: 垂直镜像； >0: 水平镜像； <0: 旋转180°
+                }
+
+                if (mInitState) {
+                    ActionRecognizeNode[] result = mGestureRecognize.action_recognize_detect(RGBMat);
+                    if(!m_bUseThread && null != result) {
+                        DrawArResult(new ActionRecognizeResult(result, RGBMat));
+                    }
+                } else {
+                    RGBMat.release();
+                    RGBMat = null;
+                }
+
+                YUVMat.release();
+                YUVMat = null;
+                DataByte = null;
+                image.close();
+            }
+        }
+    };
+
+    static void draw_body(Mat image, float[] alpha_pose_node, float[] alpha_pose_node_score) {
+        for (int i = 0; i < 136; i++) {
+            if (0.0f == alpha_pose_node_score[i]) {
+                continue;
+            }
+
+            Point p = new Point(alpha_pose_node[i * 2], alpha_pose_node[i * 2 + 1]);
+            if (i < keyPointsColors.length) {
+                Imgproc.circle(image, p, 3, keyPointsColors[i], -1);
+            } else {
+                Imgproc.circle(image, p, 1, new Scalar(255, 255, 255), 2);
+            }
+        }
+
+        for (int i = 0; i < keypointsIds.length; i++) {
+            int[] keypointsId = keypointsIds[i];
+            int first = keypointsId[0];
+            int second = keypointsId[1];
+            if (0.0f == alpha_pose_node_score[first] || 0.0f == alpha_pose_node_score[second]) {
+                continue;
+            }
+
+            Point p1 = new Point(alpha_pose_node[first * 2], alpha_pose_node[first * 2 + 1]);
+            Point p2 = new Point(alpha_pose_node[second * 2], alpha_pose_node[second * 2 + 1]);
+            if (i < lineColors.length) {
+                Imgproc.line(image, p1, p2, lineColors[i], 2 * ((int) (alpha_pose_node_score[first] + alpha_pose_node_score[second])) + 1);
+            } else {
+                Imgproc.line(image, p1, p2, new Scalar(255, 255, 255), 1);
+            }
+        }
+    }
+
+    private void drawText(Bitmap bitmap, String txt, int x_min, int y_min) {
+        Canvas canvas = new Canvas(bitmap);
+        Paint devicePaint = new Paint();
+        devicePaint.setStrokeWidth(2);
+        devicePaint.setTextSize(30);
+        devicePaint.setColor(Color.RED);
+        devicePaint.setStyle(Paint.Style.FILL);
+
+        float strWidth = devicePaint.measureText(txt, 0, txt.length());
+        canvas.drawText(txt, x_min+20, y_min-30, devicePaint);
+        canvas.drawLine(x_min+20, y_min-18, x_min+20+strWidth, y_min - 18, devicePaint);// 横线
+        canvas.drawLine(x_min+20, y_min-13, x_min+20+strWidth, y_min - 13, devicePaint);// 横线
+    }
+
+    //显示识别回来的结果
+    void DrawArResult(ActionRecognizeResult aRresult) {
+        ActionRecognizeNode[] arnodes = null ;
+        Mat matimage = null;
+
+        if(aRresult != null ) {
+            arnodes = aRresult.mArResuluts;
+            matimage = aRresult.mMat;
+        }
+        m_listPoint.clear();
+        m_listLable.clear();
+        m_listInterPoint.clear();
+        m_listInterLable.clear();
+
+        Log.d(TAG,"---- onActionRecognizeResult is mat width=" + matimage.width() + ",height = " + matimage.height());
+        if (null != arnodes) {
+            Log.d(TAG,"---arnodes.length = " + arnodes.length);
+            for (int i = 0; i < arnodes.length; i++) {
+                float[] alpha_pose_node = arnodes[i].getAlpha_pose_keypoints();
+                float[] alpha_pose_node_score = arnodes[i].getAlpha_pose_keypoints_score();
+                draw_body(matimage, alpha_pose_node, alpha_pose_node_score);
+
+                //取鼻子左边的坐标
+                m_listInterPoint.add(new Point(Math.max(0,alpha_pose_node[0])-300,Math.max(0,alpha_pose_node[1])+50));
+                m_listInterLable.add(arnodes[i].getInferActionIndex());
+
+                //取鼻子右边的坐标
+                m_listPoint.add(new Point(Math.max(0,alpha_pose_node[0])+50,Math.max(0,alpha_pose_node[1])+50));
+                m_listLable.add(arnodes[i].getActionIndex());
+            }
+        }
+
+        Bitmap drawBitmap = Bitmap.createBitmap(matimage.cols(), matimage.rows(), Bitmap.Config.ARGB_8888);
+        Utils.matToBitmap(matimage, drawBitmap);
+        if (mInitState) {
+            Point pp;
+            String strlable;
+            for (int j = 0; j < m_listInterPoint.size(); j++) {
+                //左边输出推理的标签
+                pp = (Point) m_listInterPoint.get(j);
+                strlable = ActionRecognizeNode.getActionLabel(m_listInterLable.get(j));
+                drawText(drawBitmap, strlable, (int) pp.x, (int) pp.y);
+
+                //右边输出最终的标签
+                pp = (Point) m_listPoint.get(j);
+                if(m_listLable.get(j) != -1) {
+                    m_strLable = ActionRecognizeNode.getActionLabel(m_listLable.get(j));
+                }
+                drawText(drawBitmap, m_strLable, (int) pp.x, (int) pp.y);
+            }
+        }
+
+        if (drawBitmap != null) {
+            Canvas canvas = mCameraView.lockCanvas();
+            if (canvas != null) {
+                canvas.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
+
+                canvas.drawBitmap(drawBitmap, new Rect(0, 0, drawBitmap.getWidth(), drawBitmap.getHeight()),
+                        new Rect(0, 0, canvas.getWidth(), canvas.getHeight()), null);
+            }
+            mCameraView.unlockCanvasAndPost(canvas);
+        }
+        drawBitmap.recycle();
+        drawBitmap = null;
+        aRresult.release();
+        aRresult = null;
+        Log.d(TAG,"---- onActionRecognizeResult is end");
+    }
+
+    //显示单张图片
+    void detectImage(String imagepath) {
+        File file  = new File(imagepath);
+        if(!file.exists()) {
+            Log.d(TAG, "/data/local/danren.jpg is not exist");
+            return;
+        }
+
+        Mat imgBGR = Imgcodecs.imread(imagepath,Imgcodecs.IMREAD_COLOR);
+        int imageWidth = imgBGR.width();
+        int imageHeight = imgBGR.height();
+        Log.d(TAG,"---imageWidth = " + imageWidth + ",cols = " + imgBGR.cols());
+        Log.d(TAG,"---imageHeight = " + imageHeight + ",rows = " + imgBGR.rows());
+
+        Mat RGBMat = new Mat(imageHeight, imageWidth, CvType.CV_8UC3);
+        Imgproc.cvtColor(imgBGR, RGBMat, Imgproc.COLOR_BGR2RGB);
+
+        if (mNeedRotate && m_bLoadfromCamera) {
+            //transpose(mRGBMat, mRGBMat); //90°旋转和镜像翻转处理
+            flip(RGBMat, RGBMat, 1); //0: 垂直镜像； >0: 水平镜像； <0: 旋转180°
+        }
+
+        if (mInitState) {
+            ActionRecognizeNode[] result = mGestureRecognize.action_recognize_detect(RGBMat);
+            if(!m_bUseThread && null != result) {
+                DrawArResult(new ActionRecognizeResult(result, RGBMat));
+            }
+        } else {
+            RGBMat.release();
+            RGBMat = null;
+        }
+        imgBGR.release();
+        imgBGR = null;
+    }
+
+    private void openAlbum() {
+        Intent intent = new Intent();
+        /* 开启Pictures画面Type设定为image */
+        intent.setType("image/*");
+        /* 使用Intent.ACTION_GET_CONTENT这个Action */
+        intent.setAction(Intent.ACTION_GET_CONTENT);
+        /* 取得相片后返回本画面 */
+        startActivityForResult(intent, OPENALBUM);
+    }
+
+    public static String getRealFilePath(final Context context, final Uri uri ) {
+        if (null == uri) return null;
+        final String scheme = uri.getScheme();
+        String data = null;
+        if (scheme == null) {
+            data = uri.getPath();
+        }  else if (ContentResolver.SCHEME_FILE.equals(scheme)) {
+            data = uri.getPath();
+        } else if (ContentResolver.SCHEME_CONTENT.equals(scheme)) {
+            Cursor cursor = context.getContentResolver().query(uri, new String[]{MediaStore.Images.ImageColumns.DATA}, null, null, null);
+            if (null != cursor) {
+                if (cursor.moveToFirst()) {
+                    int index = cursor.getColumnIndex(MediaStore.Images.ImageColumns.DATA);
+                    if (index > -1) {
+                        data = cursor.getString(index);
+                    }
+                }
+                cursor.close();
+            }
+        }
+        return data;
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        //用线程处理时，在handle中处理返回的结果
+        m_handleThread = new HandlerThread("ARTest", HandlerThread.NORM_PRIORITY);
+        m_handleThread.start();
+
+        m_handle = new Handler(m_handleThread.getLooper()) {
+            @Override
+            public void handleMessage(@NonNull Message msg) {
+                super.handleMessage(msg);
+                final ActionRecognizeResult result = (ActionRecognizeResult)msg.obj;
+                TestGestureRecognizeActivity.this.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        DrawArResult(result);
+                    }
+                });
+            }
+        };
+
+        // ########## 初始化需要的测试项 #########
+        OpenCVLoader.initDebug();
+        mGestureRecognize = new GestureRecognize(TestGestureRecognizeActivity.this, null,
+                                               m_handle, m_bUseThread);
+        mInitState = mGestureRecognize.getSDKInitStatus();
+        if (!mInitState) {
+            Toast toast = Toast.makeText(this, "Init failed", Toast.LENGTH_LONG);
+            toast.show();
+        }
+
+        mCameraView = (AutoFitTextureView) findViewById(R.id.camera_view);
+
+        if(m_bLoadfromCamera) {
+            if (mCamera == null) {
+                mCamera = new Camera2Basic(this, mCameraView, imageListener);
+                mCamera.startCamera();
+            }
+        } else {
+            mSurfaceTextureListener = new TextureView.SurfaceTextureListener() {
+                @Override
+                public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
+                    Log.d(TAG,"onSurfaceTextureAvailable width= " + width + ",height= "+height);
+                }
+
+                @Override
+                public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int width, int height) {
+                }
+
+                @Override
+                public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
+                    return true;
+                }
+
+                @Override
+                public void onSurfaceTextureUpdated(SurfaceTexture texture) {
+                }
+            };
+            mCameraView.setSurfaceTextureListener(mSurfaceTextureListener);
+            openAlbum();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        switch (requestCode) {
+            case OPENALBUM:
+                if (resultCode == RESULT_OK) {
+                    Uri uri = data.getData();
+                    Log.d(TAG, "-----url name" + uri.toString());
+                    m_imgPath = getRealFilePath(TestGestureRecognizeActivity.this, data.getData());
+                    detectImage(m_imgPath);
+                    Log.d(TAG, "-----image path " + m_imgPath);
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    //按两次返回键退出程序
+    private long mExitTime;
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        //判断用户是否点击了“返回键”
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            //与上次点击返回键时刻作差
+            if ((System.currentTimeMillis() - mExitTime) > 3000) {
+                //大于2000ms则认为是误操作，使用Toast进行提示
+                Toast.makeText(this, "Press again to exit", Toast.LENGTH_SHORT).show();
+                //并记录下本次点击“返回键”的时刻，以便下次进行判断
+                mExitTime = System.currentTimeMillis();
+            } else {
+                if(m_bLoadfromCamera) {
+                    mCamera.stopCamera();
+                }
+
+                // ############ 销毁需要的测试项 #########
+                mGestureRecognize.finalize();
+                mGestureRecognize = null;
+
+                System.exit(0);
+            }
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+    }
+}
