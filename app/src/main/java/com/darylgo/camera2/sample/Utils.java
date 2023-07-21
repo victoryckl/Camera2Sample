@@ -58,37 +58,44 @@ public class Utils {
     }
 
     public static byte[] YUV_420_888toNV21(Image image) {
-        int width = image.getWidth();
-        int height = image.getHeight();
-        Image.Plane yPlane = image.getPlanes()[0];
-        ByteBuffer yBuffer = getBufferWithoutPadding(yPlane.getBuffer(),
-                image.getWidth(), yPlane.getRowStride(), image.getHeight(), false);
-        ByteBuffer vBuffer;
-        //part1 获得真正的消除padding的ybuffer和ubuffer。需要对P格式和SP格式做不同的处理。如果是P格式的话只能逐像素去做，性能会降低。
-        Image.Plane plane1 = image.getPlanes()[1];
-        Image.Plane plane2 = image.getPlanes()[2];
-        if (plane2.getPixelStride() == 1) { //如果为true，说明是P格式。
-            vBuffer = getuvBufferWithoutPaddingP(plane1.getBuffer(), plane2.getBuffer(),
-                    width, height, plane1.getRowStride(), plane1.getPixelStride());
-        } else {
-            vBuffer = getBufferWithoutPadding(plane2.getBuffer(),
-                    image.getWidth(), plane2.getRowStride(), image.getHeight() / 2, true);
+        try {
+            int width = image.getWidth();
+            int height = image.getHeight();
+            Image.Plane yPlane = image.getPlanes()[0];
+            if (yPlane == null) return null;
+
+            ByteBuffer yBuffer = getBufferWithoutPadding(yPlane.getBuffer(),
+                    image.getWidth(), yPlane.getRowStride(), image.getHeight(), false);
+            ByteBuffer vBuffer;
+            //part1 获得真正的消除padding的ybuffer和ubuffer。需要对P格式和SP格式做不同的处理。如果是P格式的话只能逐像素去做，性能会降低。
+            Image.Plane plane1 = image.getPlanes()[1];
+            Image.Plane plane2 = image.getPlanes()[2];
+            if (plane2.getPixelStride() == 1) { //如果为true，说明是P格式。
+                vBuffer = getuvBufferWithoutPaddingP(plane1.getBuffer(), plane2.getBuffer(),
+                        width, height, plane1.getRowStride(), plane1.getPixelStride());
+            } else {
+                vBuffer = getBufferWithoutPadding(plane2.getBuffer(),
+                        image.getWidth(), plane2.getRowStride(), image.getHeight() / 2, true);
+            }
+
+            //part2 将y数据和uv的交替数据（除去最后一个v值）赋值给nv21
+            int ySize = yBuffer.remaining();
+            int vSize = vBuffer.remaining();
+            byte[] nv21;
+            int byteSize = width * height * 3 / 2;
+            nv21 = new byte[byteSize];
+            yBuffer.get(nv21, 0, ySize);
+            vBuffer.get(nv21, ySize, vSize);
+
+            //part3 最后一个像素值的u值是缺失的，因此需要从u平面取一下。
+            ByteBuffer uPlane = plane1.getBuffer();
+            byte lastValue = uPlane.get(uPlane.capacity() - 1);
+            nv21[byteSize - 1] = lastValue;
+            return nv21;
+        } catch (Exception e) {
+            e.printStackTrace();
         }
-
-        //part2 将y数据和uv的交替数据（除去最后一个v值）赋值给nv21
-        int ySize = yBuffer.remaining();
-        int vSize = vBuffer.remaining();
-        byte[] nv21;
-        int byteSize = width * height * 3 / 2;
-        nv21 = new byte[byteSize];
-        yBuffer.get(nv21, 0, ySize);
-        vBuffer.get(nv21, ySize, vSize);
-
-        //part3 最后一个像素值的u值是缺失的，因此需要从u平面取一下。
-        ByteBuffer uPlane = plane1.getBuffer();
-        byte lastValue = uPlane.get(uPlane.capacity() - 1);
-        nv21[byteSize - 1] = lastValue;
-        return nv21;
+        return null;
     }
 
 

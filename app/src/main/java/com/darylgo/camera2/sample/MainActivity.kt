@@ -724,7 +724,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
     val mPaint  = Paint()
     private fun initPaint() {
         mPaint.setColor(Color.RED)
-        mPaint.setTextSize(40f)
+        mPaint.setTextSize(20f)
         mPaint.setStyle(Paint.Style.FILL)
     }
 
@@ -751,9 +751,12 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                         "pixelStride=${p1.pixelStride}, rowStride=${p1.rowStride}"
             )
 
-
             //从image中获取到nv21格式的数据
             val nv21Origin = Utils.YUV_420_888toNV21(image)
+            if (nv21Origin == null) {
+                image.close()
+                return
+            }
             val nv21: ByteArray
             if (true) { // 旋转
                 val nv21Rotated = ByteArray(nv21Origin.size)
@@ -788,7 +791,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                 bitmap, Rect(0, 0, bitmap.getWidth(), bitmap.getHeight()),
                 Rect(0, 0, canvas.width, canvas.height), null
             )
-            canvas.drawText("人脸："+faceCount, 0f, 40f, mPaint)
+            canvas.drawText("人脸：$faceCount", 0f, 40f, mPaint)
             previewSurface!!.unlockCanvasAndPost(canvas)
 
             //将传入的 yuv buffer 转为 cv::mat, 并通过cvtcolor 转换为BGR 或 RGB 格式
