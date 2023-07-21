@@ -743,11 +743,14 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
             var imageWidth = image.width
             var imageHeight = image.height
 
+            var thread = Thread.currentThread()
+            val p1 = image.planes[1]
             Log.i(
-                TAG, "onImageAvailable: w=${imageWidth}, h=${imageHeight}, rotateDeg=$rotateDeg, " +
-                        "${Thread.currentThread().name}, 0x${Integer.toHexString(image.format)}, " +
-                        "pixelStride=${image.planes[1].pixelStride}, rowStride=${image.planes[1].rowStride}"
+                TAG, "onImageAvailable: w=$imageWidth, h=$imageHeight, rotate=$rotateDeg, " +
+                        "$thread, format=0x${Integer.toHexString(image.format)}, " +
+                        "pixelStride=${p1.pixelStride}, rowStride=${p1.rowStride}"
             )
+
 
             //从image中获取到nv21格式的数据
             val nv21Origin = Utils.YUV_420_888toNV21(image)
