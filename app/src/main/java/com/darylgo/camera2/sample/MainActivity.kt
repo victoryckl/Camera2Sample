@@ -77,6 +77,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
     private val captureResults: BlockingQueue<CaptureResult> = LinkedBlockingDeque()
     private var cameraThread: HandlerThread? = null
     private var cameraHandler: Handler? = null
+    private var currentCameraId: String? = null
     private var frontCameraId: String? = null
     private var frontCameraCharacteristics: CameraCharacteristics? = null
     private var backCameraId: String? = null
@@ -168,6 +169,9 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                 val captureSession = captureSessionFuture?.get()
                 val previewImageRequestBuilder = previewImageRequestBuilder!!
                 val captureImageRequestBuilder = captureImageRequestBuilder!!
+
+                initRotateDeg()
+
                 if (cameraDevice != null && captureSession != null) {
                     val previewSurface = previewSurface!!
                     val previewDataSurface = previewDataSurface
@@ -327,13 +331,24 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
             Log.i(TAG, "onCreate: backCamera orientation = ${orientation}")
         }
 
-        val cameraId = frontCameraId ?: backCameraId
-        if (cameraId == null)
-            Toast.makeText(this, "相机不支持 INFO_SUPPORTED_HARDWARE_LEVEL_FULL ", Toast.LENGTH_LONG).show()
+        currentCameraId = getcameraId()
+        if (currentCameraId == null) {
+            Toast.makeText(this, "没有相机", Toast.LENGTH_LONG).show()
+            //Toast.makeText(this, "相机不支持 INFO_SUPPORTED_HARDWARE_LEVEL_FULL ", Toast.LENGTH_LONG).show()
+        }
 
         previewSurfaceTextureFuture = SettableFuture()
         cameraPreview.surfaceTextureListener = PreviewSurfaceTextureListener()
         captureImageButton.setOnTouchListener(CaptureImageButtonListener(this))
+    }
+
+    private fun getcameraId(): String? {
+        return frontCameraId ?: backCameraId
+//        return backCameraId ?: frontCameraId
+    }
+
+    private fun isFrontCamera(): Boolean {
+        return currentCameraId == frontCameraId
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -355,7 +370,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         super.onResume()
         deviceOrientationListener.enable()
         if (checkRequiredPermissions()) {
-            val cameraId = frontCameraId ?: backCameraId
+            val cameraId = currentCameraId
             if (cameraId != null) {
                 openCamera(cameraId)
                 createCaptureRequestBuilders()
@@ -401,11 +416,10 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
 
     @MainThread
     private fun switchCamera() {
-        val cameraDevice = cameraDeviceFuture?.get()
-        val oldCameraId = cameraDevice?.id
-        val newCameraId = if (oldCameraId == frontCameraId) backCameraId else frontCameraId
+        val newCameraId = if (isFrontCamera()) backCameraId else frontCameraId
         if (newCameraId != null) {
             closeCamera()
+            currentCameraId = newCameraId
             openCamera(newCameraId)
             createCaptureRequestBuilders()
             setPreviewSize(MAX_PREVIEW_WIDTH, MAX_PREVIEW_HEIGHT)
@@ -506,8 +520,10 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
             else -> 0
         }
         val sensorOrientation = cameraCharacteristics[CameraCharacteristics.SENSOR_ORIENTATION]!!
-        return if (cameraCharacteristics[CameraCharacteristics.LENS_FACING] == CameraCharacteristics.LENS_FACING_FRONT) {
-            (360 - (sensorOrientation + degrees) % 360) % 360
+        return if (cameraCharacteristics[CameraCharacteristics.LENS_FACING]
+            == CameraCharacteristics.LENS_FACING_FRONT) {
+            //(360 - (sensorOrientation + degrees) % 360) % 360
+            (sensorOrientation + degrees) % 360
         } else {
             (sensorOrientation - degrees + 360) % 360
         }
@@ -724,19 +740,36 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         override fun onImageAvailable(imageReader: ImageReader) {
             val image = imageReader.acquireNextImage()
             if (image == null) return
-            val imageWidth = image.width
-            val imageHeight = image.height
+            var imageWidth = image.width
+            var imageHeight = image.height
 
-            Log.i(TAG, "onImageAvailable: w=${imageWidth}, h=${imageHeight}, " +
-                    "${Thread.currentThread().name}, 0x${Integer.toHexString(image.format)}, " +
-                    "pixelStride=${image.planes[1].pixelStride}, rowStride=${image.planes[1].rowStride}")
+            Log.i(
+                TAG, "onImageAvailable: w=${imageWidth}, h=${imageHeight}, rotateDeg=$rotateDeg, " +
+                        "${Thread.currentThread().name}, 0x${Integer.toHexString(image.format)}, " +
+                        "pixelStride=${image.planes[1].pixelStride}, rowStride=${image.planes[1].rowStride}"
+            )
 
             //从image中获取到nv21格式的数据
-            val dataByte = Utils.YUV_420_888toNV21(image)
-            // 图像中找到几个人脸
-            val faceCount = blazefacencnn?.find(dataByte, imageWidth, imageHeight)
+            val nv21Origin = Utils.YUV_420_888toNV21(image)
+            val nv21: ByteArray
+            if (true) { // 旋转
+                val nv21Rotated = ByteArray(nv21Origin.size)
+                Utils.rotateNV21(nv21Origin, nv21Rotated, imageWidth, imageHeight, rotateDeg)
+                // 旋转90或270度，交换宽高
+                if (rotateDeg == 90 || rotateDeg == 270) {
+                    var temp = imageWidth
+                    imageWidth = imageHeight
+                    imageHeight = temp
+                }
+                nv21 = nv21Rotated
+            } else {
+                nv21 = nv21Origin
+            }
 
-            val yuvimage = YuvImage(dataByte, ImageFormat.NV21, imageWidth, imageHeight, null)
+            // 图像中找到几个人脸
+            val faceCount = blazefacencnn?.find(nv21, imageWidth, imageHeight)
+
+            val yuvimage = YuvImage(nv21, ImageFormat.NV21, imageWidth, imageHeight, null)
             val baos = ByteArrayOutputStream()
             yuvimage.compressToJpeg(Rect(0, 0, imageWidth, imageHeight), 100, baos)
             var rawImage = baos.toByteArray()
@@ -898,6 +931,14 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         val ret_init = blazefacencnn!!.loadModel(assets, 0, 0)
         if (!ret_init) {
             Log.e("MainActivity", "blazefacencnn loadModel failed")
+        }
+    }
+
+    private var rotateDeg: Int = 0
+    private fun initRotateDeg() {
+        var characteristics = cameraCharacteristicsFuture?.get()
+        characteristics?.let {
+            rotateDeg = getDisplayRotation(it)
         }
     }
 }

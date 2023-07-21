@@ -306,7 +306,7 @@ int haveFace(cv::Mat& rgb) {
     return 0;
 }
 
-cv::Mat yuv420sp2rgb(const unsigned char* nv21, int nv21_width, int nv21_height) {
+cv::Mat bz_yuv420sp2rgb_rotate(const unsigned char* nv21, int nv21_width, int nv21_height) {
     int camera_orientation = 270;
     int camera_facing = 1;
 
@@ -347,6 +347,18 @@ cv::Mat yuv420sp2rgb(const unsigned char* nv21, int nv21_width, int nv21_height)
     // nv21_rotated to rgb
     cv::Mat rgb(h, w, CV_8UC3);
     ncnn::yuv420sp2rgb(nv21_rotated.data, w, h, rgb.data);
+
+    return rgb;
+}
+
+cv::Mat bz_yuv420sp2rgb(const unsigned char* nv21, int nv21_width, int nv21_height) {
+    // rotate nv21
+    int w = nv21_width;
+    int h = nv21_height;
+
+    // nv21_rotated to rgb
+    cv::Mat rgb(h, w, CV_8UC3);
+    ncnn::yuv420sp2rgb(nv21, w, h, rgb.data);
 
     return rgb;
 }
@@ -400,11 +412,11 @@ void on_image(const unsigned char* nv21, int nv21_width, int nv21_height)
 JNIEXPORT jint JNICALL Java_com_tencent_blazefacencnn_BlazeFaceNcnn_find(
         JNIEnv* env, jobject thiz, jbyteArray buffer, jint width, jint height)
 {
-   __android_log_print(ANDROID_LOG_WARN, "ncnn", "renderImage: len = %d, w = %d, h = %d", width, height);
+    //__android_log_print(ANDROID_LOG_WARN, "ncnn", "find: w = %d, h = %d", width, height);
 
     uint8_t * data = (uint8_t *)(env->GetByteArrayElements(buffer, NULL));
 
-    cv::Mat rgb = yuv420sp2rgb(data, width, height);
+    cv::Mat rgb = bz_yuv420sp2rgb(data, width, height);
     int count = haveFace(rgb);
 
     env->ReleaseByteArrayElements(buffer, (int8_t*) data, 0);
