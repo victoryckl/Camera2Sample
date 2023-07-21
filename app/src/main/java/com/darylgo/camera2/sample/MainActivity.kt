@@ -60,8 +60,8 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         private const val MSG_START_CAPTURE_IMAGE_CONTINUOUSLY: Int = 11
         private const val MSG_CREATE_REQUEST_BUILDERS: Int = 12
 
-        private const val MAX_PREVIEW_WIDTH: Int = 320//1440
-        private const val MAX_PREVIEW_HEIGHT: Int = 240//1080
+        private const val MAX_PREVIEW_WIDTH: Int = 640//1440
+        private const val MAX_PREVIEW_HEIGHT: Int = 480//1080
         private const val MAX_IMAGE_WIDTH: Int = 4032
         private const val MAX_IMAGE_HEIGHT: Int = 3024
     }
@@ -71,7 +71,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
     private val saveImageExecutor: Executor = Executors.newSingleThreadExecutor()
     private val deviceOrientationListener: DeviceOrientationListener by lazy { DeviceOrientationListener(this) }
     private val cameraManager: CameraManager by lazy { getSystemService(CameraManager::class.java) }
-    private val cameraPreview: CameraPreview by lazy { findViewById<CameraPreview>(R.id.camera_preview) }
+    private val cameraPreview: AutoFitTextureView by lazy { findViewById(R.id.camera_preview) }
     private val thumbnailView: ImageView by lazy { findViewById<ImageView>(R.id.thumbnail_view) }
     private val captureImageButton: ImageButton by lazy { findViewById<ImageButton>(R.id.capture_image_button) }
     private val captureResults: BlockingQueue<CaptureResult> = LinkedBlockingDeque()
@@ -144,6 +144,10 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                     val previewSurfaceTexture = previewSurfaceTextureFuture!!.get()!!
                     previewSurfaceTexture.setDefaultBufferSize(previewSize.width, previewSize.height)
                     previewSurface = Surface(previewSurfaceTexture)
+                    runOnUiThread {
+                        cameraPreview.setAspectRation(previewSize.width, previewSize.height)
+                    }
+
                     // Set up an ImageReader to receive preview frame data if YUV_420_888 is supported.
                     val imageFormat = ImageFormat.YUV_420_888
                     val streamConfigurationMap = cameraCharacteristics[CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP]
@@ -304,7 +308,6 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         setContentView(R.layout.activity_main)
 
         initPaint()
-        initOrientationListener()
         startCameraThread()
         reload()
 
@@ -392,7 +395,6 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
 
     override fun onDestroy() {
         super.onDestroy()
-        mOrientationListener.disable()
         stopCameraThread()
         mediaActionSound.release()
     }
@@ -519,14 +521,20 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
             Surface.ROTATION_270 -> 270
             else -> 0
         }
+
         val sensorOrientation = cameraCharacteristics[CameraCharacteristics.SENSOR_ORIENTATION]!!
-        return if (cameraCharacteristics[CameraCharacteristics.LENS_FACING]
-            == CameraCharacteristics.LENS_FACING_FRONT) {
+
+        var outDeg = if (cameraCharacteristics[CameraCharacteristics.LENS_FACING]
+            == CameraCharacteristics.LENS_FACING_FRONT
+        ) {
             //(360 - (sensorOrientation + degrees) % 360) % 360
             (sensorOrientation + degrees) % 360
         } else {
             (sensorOrientation - degrees + 360) % 360
         }
+        Log.i(TAG, "getDisplayRotation: rotation=$rotation, degrees=$degrees, sensorOrientation=$sensorOrientation, outDeg=$outDeg")
+
+        return outDeg
     }
 
     private fun getJpegOrientation(cameraCharacteristics: CameraCharacteristics, deviceOrientation: Int): Int {
@@ -767,7 +775,15 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                     imageWidth = imageHeight
                     imageHeight = temp
                 }
-                nv21 = nv21Rotated
+
+                // 前置摄像头，图像需要水平翻转
+                if (isFrontCamera()) {
+                    Utils.reverseNV21_H(nv21Rotated, nv21Origin, imageWidth, imageHeight)
+                    nv21 = nv21Origin
+                } else {
+                    nv21 = nv21Rotated
+                }
+
             } else {
                 nv21 = nv21Origin
             }
@@ -889,44 +905,6 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
                     }
                 }
             }
-        }
-    }
-
-    //=================================================
-    private var prevOrientation: Int = 0
-    private lateinit var mOrientationListener: OrientationEventListener
-
-    private fun initOrientationListener() {
-        mOrientationListener = object : OrientationEventListener(this) {
-            override fun onOrientationChanged(orientation: Int) {
-                var orientation = orientation
-                if (orientation == ORIENTATION_UNKNOWN) {
-                    return  //手机平放时，检测不到有效的角度
-                }
-                //只检测是否有四个角度的改变
-                orientation = if (orientation > 350 || orientation < 10) { //0度
-                    0
-                } else if (orientation > 80 && orientation < 100) { //90度
-                    90
-                } else if (orientation > 170 && orientation < 190) { //180度
-                    180
-                } else if (orientation > 260 && orientation < 280) { //270度
-                    270
-                } else {
-                    return
-                }
-                if (prevOrientation != orientation) {
-                    Log.v(TAG, "Orientation changed to $orientation")
-                    prevOrientation = orientation
-                }
-            }
-        }
-        if (mOrientationListener.canDetectOrientation()) {
-            Log.v(TAG, "Can detect orientation");
-            mOrientationListener.enable();
-        } else {
-            Log.v(TAG, "Cannot detect orientation");
-            mOrientationListener.disable();
         }
     }
 
